@@ -67,8 +67,8 @@ func TestCollapseDomains(t *testing.T) {
 		{
 			name: "siblings with same IPs collapse to parent",
 			routes: map[string][]string{
-				"app.home.lab":  {"1.2.3.4"},
-				"api.home.lab":  {"1.2.3.4"},
+				"app.home.lab": {"1.2.3.4"},
+				"api.home.lab": {"1.2.3.4"},
 			},
 			want: map[string][]string{
 				"home.lab": {"1.2.3.4"},
