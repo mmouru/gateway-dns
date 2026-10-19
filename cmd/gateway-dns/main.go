@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/marttimourujarvi/gateway-dns/internal/controller"
 	"github.com/marttimourujarvi/gateway-dns/internal/dnsstore"
 	"github.com/marttimourujarvi/gateway-dns/internal/server"
+	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -50,10 +54,37 @@ func main() {
 		Level: slog.LevelInfo,
 	})).With("component", "fqdn-reconciler")
 
+	var tsClient *controller.TailscaleNSClient
+	if strings.EqualFold(os.Getenv("TAILSCALE_NAMESERVERS"), "true") {
+		namespace := getNamespace()
+		log.Printf("tailscale split-dns sync enabled; reading secret from namespace %s", namespace)
+
+		secret := &corev1.Secret{}
+		key := client.ObjectKey{Name: "tailscale", Namespace: namespace}
+		if err := mgr.GetAPIReader().Get(context.Background(), key, secret); err != nil {
+			ctrl.Log.Error(err, "unable to read tailscale secret")
+			log.Fatal(err)
+		}
+
+		tailnet := string(secret.Data["tailnet"])
+		accessToken := string(secret.Data["accessToken"])
+
+		if tailnet == "" || accessToken == "" {
+			log.Fatal("tailscale secret missing tailnet or accessToken keys")
+		}
+
+		c := controller.CreateTailscaleClient(tailnet, accessToken, logger)
+		tsClient = &c
+		log.Printf("tailscale client initialized for tailnet %s", tailnet)
+	} else {
+		log.Println("tailscale split-dns sync disabled (set TAILSCALE_NAMESERVERS=true to enable)")
+	}
+
 	if err := (&controller.FQDNReconciler{
-		Client:   mgr.GetClient(),
-		DNSStore: store,
-		Logger:   logger,
+		Client:          mgr.GetClient(),
+		DNSStore:        store,
+		Logger:          logger,
+		TailscaleClient: tsClient,
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create controller")
 		log.Fatal(err)
@@ -63,4 +94,15 @@ func main() {
 		ctrl.Log.Error(err, "problem running manager")
 		log.Fatal(err)
 	}
+}
+
+func getNamespace() string {
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		return "default"
+	}
+	return strings.TrimSpace(string(data))
 }

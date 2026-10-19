@@ -1,7 +1,9 @@
+NAME ?= gateway-dns
+
 deploy: build
-	kind load docker-image gateway-dns:latest --name dev
+	kind load docker-image ${NAME}:latest --name dev
 build: fmt
-	docker build . -t gateway-dns
+	docker build . -t ${NAME}
 fmt: vet
 	go fmt ./...
 vet:
