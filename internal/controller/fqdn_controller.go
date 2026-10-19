@@ -19,8 +19,9 @@ import (
 // keeps a DNSStore in sync with the IPv4 addresses exposed by parent Gateways.
 type FQDNReconciler struct {
 	client.Client
-	DNSStore *dnsstore.DNSStore
-	Logger   *slog.Logger
+	DNSStore        *dnsstore.DNSStore
+	Logger          *slog.Logger
+	TailscaleClient *TailscaleNSClient
 }
 
 const finalizer = "gateway.dns/finalizer"
@@ -82,6 +83,9 @@ func (r *FQDNReconciler) reconcileRoute(ctx context.Context, obj client.Object, 
 		return ctrl.Result{}, nil
 	}
 
+	var gatewayIPs []string
+	seenIPs := make(map[string]struct{})
+
 	// Clear any existing DNS entries for this route's hostnames so that
 	// hostname or gateway changes do not leave stale records behind.
 	for _, hostname := range hostnames {
@@ -115,6 +119,10 @@ func (r *FQDNReconciler) reconcileRoute(ctx context.Context, obj client.Object, 
 				r.Logger.Debug("skipping non-IPv4 address", "address", addr.Value)
 				continue
 			}
+			if _, ok := seenIPs[ip.String()]; !ok {
+				seenIPs[ip.String()] = struct{}{}
+				gatewayIPs = append(gatewayIPs, ip.String())
+			}
 			for _, hostname := range hostnames {
 				key := string(hostname) + "."
 				if old, exists := r.DNSStore.Lookup(key); !exists || old != ip.String() {
@@ -123,6 +131,21 @@ func (r *FQDNReconciler) reconcileRoute(ctx context.Context, obj client.Object, 
 				r.DNSStore.Set(key, ip.String())
 			}
 		}
+	}
+
+	if r.TailscaleClient != nil && len(gatewayIPs) > 0 {
+		routes := make(map[string][]string, len(hostnames))
+		for _, hostname := range hostnames {
+			routes[string(hostname)] = gatewayIPs
+		}
+		_, added, err := r.TailscaleClient.patchSplitDNS(routes)
+		if err != nil {
+			r.Logger.Error("failed to patch tailscale split-dns", "error", err)
+		} else if len(added) > 0 {
+			r.Logger.Info("added tailscale split-dns routes", "added", added, "route", obj.GetName(), "namespace", obj.GetNamespace())
+		}
+	} else if r.TailscaleClient == nil {
+		r.Logger.Debug("tailscale client not configured, skipping split-dns sync")
 	}
 
 	return ctrl.Result{}, nil

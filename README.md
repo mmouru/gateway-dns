@@ -57,6 +57,45 @@ A Dockerfile and deploy manifests are included. See `deploy/` and `Makefile` for
 | `internal/controller/`        | Gateway API reconciler                    |
 | `deploy/`                     | Kubernetes manifests                      |
 
+## Tailscale integration
+
+When `TAILSCALE_NAMESERVERS` is set to `true`, gateway-dns automatically creates **split-dns routes** in Tailscale. Each hostname declared on a Gateway API route gets its own split-dns entry pointing to the IPv4 addresses of its parent Gateway(s).
+
+### Prerequisites
+
+Create a Secret named `tailscale` in the **same namespace** as gateway-dns:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tailscale
+  namespace: <gateway-dns-namespace>
+type: Opaque
+stringData:
+  tailnet: "your-tailnet.ts.net"
+  accessToken: "<tskey-api-xxxxx>"
+```
+
+- `tailnet` — your Tailscale tailnet name (e.g. `example.ts.net`)
+- `accessToken` — a Tailscale API access token with DNS edit permissions
+
+### Configuration
+
+| Environment variable | Description | Default |
+|----------------------|-------------|---------|
+| `TAILSCALE_NAMESERVERS` | Enable Tailscale split-dns sync | `false` |
+| `POD_NAMESPACE` | Namespace to look for the `tailscale` Secret | auto-detected from service-account file |
+
+The pod namespace is auto-detected from `/var/run/secrets/kubernetes.io/serviceaccount/namespace` if `POD_NAMESPACE` is not set.
+
+### Behavior
+
+- For every hostname on a reconciled route, a split-dns route is created (or updated) mapping the hostname to the Gateway's IPv4 addresses via the Tailscale API.
+- Existing split-dns routes on other domains are left untouched.
+- The controller fetches current split-dns config before every update, merges in the new Gateway IPs, and sends a `PATCH` to [`/tailnet/{tailnet}/dns/split-dns`](https://tailscale.com/api-docs#tag/dns/PATCH/tailnet/{tailnet}/dns/split-dns).
+- Tailscale API calls are performed by `TailscaleNSClient` (`internal/controller/tailscale_ns.go`).
+
 ## Release process
 
 This repo follows **trunk-based development**:
