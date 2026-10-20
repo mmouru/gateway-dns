@@ -27,14 +27,14 @@ func newBody(routes map[string][]string) (*bytes.Reader, error) {
 
 const splitDNSURI = "https://api.tailscale.com/api/v2/tailnet/%s/dns/split-dns"
 
-type TailscaleNSClient struct {
+type TailscaleDNSClient struct {
 	client *http.Client
 	apiURI string
 	bearer string
 	logger *slog.Logger
 }
 
-func (tc TailscaleNSClient) newRequest(ctx context.Context, method string, body io.Reader) (*http.Request, error) {
+func (tc TailscaleDNSClient) newRequest(ctx context.Context, method string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, tc.apiURI, body)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func readErr(resp *http.Response) error {
 	return fmt.Errorf("unexpected status code %d from tailscale api: %s", resp.StatusCode, string(b))
 }
 
-func (tc TailscaleNSClient) getSplitDNS() (map[string][]string, error) {
+func (tc TailscaleDNSClient) getSplitDNS() (map[string][]string, error) {
 	req, err := tc.newRequest(context.Background(), http.MethodGet, nil)
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func (tc TailscaleNSClient) getSplitDNS() (map[string][]string, error) {
 	return payload.Routes, nil
 }
 
-func (tc TailscaleNSClient) patchSplitDNS(routes map[string][]string) (bool, []string, error) {
+func (tc TailscaleDNSClient) patchSplitDNS(routes map[string][]string) (bool, []string, error) {
 	routes = collapseDomains(routes)
 
 	existing, err := tc.getSplitDNS()
@@ -137,8 +137,8 @@ func (tc TailscaleNSClient) patchSplitDNS(routes map[string][]string) (bool, []s
 	return true, added, nil
 }
 
-func CreateTailscaleClient(tailnet string, accessToken string, logger *slog.Logger) TailscaleNSClient {
-	c := TailscaleNSClient{
+func CreateTailscaleClient(tailnet string, accessToken string, logger *slog.Logger) TailscaleDNSClient {
+	c := TailscaleDNSClient{
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},

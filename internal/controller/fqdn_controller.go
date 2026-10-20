@@ -21,7 +21,7 @@ type FQDNReconciler struct {
 	client.Client
 	DNSStore        *dnsstore.DNSStore
 	Logger          *slog.Logger
-	TailscaleClient *TailscaleNSClient
+	TailscaleClient *TailscaleDNSClient
 }
 
 const finalizer = "gateway.dns/finalizer"
