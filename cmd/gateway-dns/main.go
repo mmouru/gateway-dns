@@ -54,7 +54,7 @@ func main() {
 		Level: slog.LevelInfo,
 	})).With("component", "fqdn-reconciler")
 
-	var tsClient *controller.TailscaleNSClient
+	var tsClient *controller.TailscaleDNSClient
 	if strings.EqualFold(os.Getenv("TAILSCALE_NAMESERVERS"), "true") {
 		namespace := getNamespace()
 		log.Printf("tailscale split-dns sync enabled; reading secret from namespace %s", namespace)

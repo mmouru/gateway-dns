@@ -94,7 +94,7 @@ The pod namespace is auto-detected from `/var/run/secrets/kubernetes.io/servicea
 - For every hostname on a reconciled route, a split-dns route is created (or updated) mapping the hostname to the Gateway's IPv4 addresses via the Tailscale API.
 - Existing split-dns routes on other domains are left untouched.
 - The controller fetches current split-dns config before every update, merges in the new Gateway IPs, and sends a `PATCH` to [`/tailnet/{tailnet}/dns/split-dns`](https://tailscale.com/api-docs#tag/dns/PATCH/tailnet/{tailnet}/dns/split-dns).
-- Tailscale API calls are performed by `TailscaleNSClient` (`internal/controller/tailscale_ns.go`).
+- Tailscale API calls are performed by `TailscaleDNSClient` (`internal/controller/tailscale.go`).
 
 ## Release process
 
