@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0](https://github.com/mmouru/gateway-dns/compare/v0.1.2...v0.2.0) (2026-10-19)
+
+
+### Features
+
+* add optional tailscale split-dns control code ([8f5bf64](https://github.com/mmouru/gateway-dns/commit/8f5bf64d155d8dc8092473f97d7dd8bb81e5733f))
+* add tailscale client creation to main ([c2b0897](https://github.com/mmouru/gateway-dns/commit/c2b08979e043ede24cffd60c45176f62569b772c))
+
+
+### Bug Fixes
+
+* gofmt findings ([b2cc947](https://github.com/mmouru/gateway-dns/commit/b2cc947d58f417a87dbecccd68d86fd36fb5097a))
+
+
+### Miscellaneous
+
+* add custom name for tags in makefile ([fa18156](https://github.com/mmouru/gateway-dns/commit/fa1815669be028ec996030012d27cb8968fe3cca))
+* add tests to tailscale nameserver client ([10b9a7f](https://github.com/mmouru/gateway-dns/commit/10b9a7f656f45933c610a5335502d4f63127aafd))
+
 ## [0.1.2](https://github.com/marttimourujarvi/gateway-dns/compare/v0.1.1...v0.1.2) (2026-09-30)
 
 
