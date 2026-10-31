@@ -133,10 +133,14 @@ func (r *FQDNReconciler) reconcileRoute(ctx context.Context, obj client.Object, 
 		}
 	}
 
-	if r.TailscaleClient != nil && len(gatewayIPs) > 0 {
+	if r.TailscaleClient == nil {
+		r.Logger.Debug("tailscale client not configured, skipping split-dns sync")
+	} else if resolverIPs := r.TailscaleClient.DNSResolverIPs(); len(resolverIPs) == 0 {
+		r.Logger.Warn("tailscale client configured but no DNS resolver IPs available, skipping split-dns sync")
+	} else {
 		routes := make(map[string][]string, len(hostnames))
 		for _, hostname := range hostnames {
-			routes[string(hostname)] = gatewayIPs
+			routes[string(hostname)] = resolverIPs
 		}
 		_, added, err := r.TailscaleClient.patchSplitDNS(routes)
 		if err != nil {
@@ -144,8 +148,6 @@ func (r *FQDNReconciler) reconcileRoute(ctx context.Context, obj client.Object, 
 		} else if len(added) > 0 {
 			r.Logger.Info("added tailscale split-dns routes", "added", added, "route", obj.GetName(), "namespace", obj.GetNamespace())
 		}
-	} else if r.TailscaleClient == nil {
-		r.Logger.Debug("tailscale client not configured, skipping split-dns sync")
 	}
 
 	return ctrl.Result{}, nil

@@ -21,8 +21,8 @@ rules:
     resources: ["httproutes", "grpcroutes"]
     verbs: ["update"]  # for finalizers
   - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get"]
+    resources: ["secrets", "services"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -56,8 +56,9 @@ spec:
     spec:
       serviceAccount: gateway-dns
       containers:
-      - image: mmouru/gateway-dns:latest
+      - image: testi:latest
         name: dns-store
+        imagePullPolicy: Never
         ports:
         - containerPort: 5353
           protocol: UDP

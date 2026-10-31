@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/marttimourujarvi/gateway-dns/internal/controller"
 	"github.com/marttimourujarvi/gateway-dns/internal/dnsstore"
@@ -22,12 +23,15 @@ import (
 const PORT = "5353"
 
 func main() {
+	fmt.Print(dnsstore.Banner)
 	ctrl.SetLogger(zap.New())
 
 	// Single in-memory store shared by the DNS server and the reconciler.
 	store := dnsstore.NewStore()
 
-	fmt.Print(dnsstore.Banner)
+	var tsClient *controller.TailscaleDNSClient
+	namespace := getNamespace()
+
 	// Start the DNS server in the background.
 	go func() {
 		srv := server.New(fmt.Sprintf("0.0.0.0:%s", PORT), store)
@@ -54,9 +58,7 @@ func main() {
 		Level: slog.LevelInfo,
 	})).With("component", "fqdn-reconciler")
 
-	var tsClient *controller.TailscaleDNSClient
 	if strings.EqualFold(os.Getenv("TAILSCALE_NAMESERVERS"), "true") {
-		namespace := getNamespace()
 		log.Printf("tailscale split-dns sync enabled; reading secret from namespace %s", namespace)
 
 		secret := &corev1.Secret{}
@@ -78,6 +80,43 @@ func main() {
 		log.Printf("tailscale client initialized for tailnet %s", tailnet)
 	} else {
 		log.Println("tailscale split-dns sync disabled (set TAILSCALE_NAMESERVERS=true to enable)")
+	}
+
+	var dnsResolverIPs []string
+	svcKey := client.ObjectKey{Name: "gateway-dns", Namespace: namespace}
+	pollCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+pollLoop:
+	for {
+		svc := &corev1.Service{}
+		if err := mgr.GetAPIReader().Get(pollCtx, svcKey, svc); err == nil {
+			for _, ing := range svc.Status.LoadBalancer.Ingress {
+				if ing.IP != "" {
+					dnsResolverIPs = append(dnsResolverIPs, ing.IP)
+				}
+			}
+			if len(dnsResolverIPs) == 0 && len(svc.Spec.ExternalIPs) > 0 {
+				dnsResolverIPs = append(dnsResolverIPs, svc.Spec.ExternalIPs...)
+			}
+			if len(dnsResolverIPs) > 0 {
+				log.Printf("DNS resolver IPs for Tailscale: %v", dnsResolverIPs)
+				if tsClient != nil {
+					tsClient.SetDNSResolverIPs(dnsResolverIPs)
+				}
+				break pollLoop
+			}
+			log.Println("waiting for gateway-dns service LB IP...")
+		} else {
+			log.Printf("warning: unable to read DNS service gateway-dns/%s: %v", namespace, err)
+		}
+
+		select {
+		case <-pollCtx.Done():
+			log.Println("warning: timed out waiting for gateway-dns service LB IP; Tailscale split-dns sync will be skipped")
+			break pollLoop
+		case <-time.After(5 * time.Second):
+		}
 	}
 
 	if err := (&controller.FQDNReconciler{

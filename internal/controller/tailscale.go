@@ -28,10 +28,19 @@ func newBody(routes map[string][]string) (*bytes.Reader, error) {
 const splitDNSURI = "https://api.tailscale.com/api/v2/tailnet/%s/dns/split-dns"
 
 type TailscaleDNSClient struct {
-	client *http.Client
-	apiURI string
-	bearer string
-	logger *slog.Logger
+	client       *http.Client
+	apiURI       string
+	bearer       string
+	logger       *slog.Logger
+	dnsServerIPs []string
+}
+
+func (tc TailscaleDNSClient) DNSResolverIPs() []string {
+	return tc.dnsServerIPs
+}
+
+func (tc *TailscaleDNSClient) SetDNSResolverIPs(ips []string) {
+	tc.dnsServerIPs = ips
 }
 
 func (tc TailscaleDNSClient) newRequest(ctx context.Context, method string, body io.Reader) (*http.Request, error) {
