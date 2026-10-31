@@ -143,4 +143,3 @@ func TestNewRequestSetsAuth(t *testing.T) {
 		t.Errorf("Authorization = %q, want %q", auth, "Bearer token123")
 	}
 }
-
