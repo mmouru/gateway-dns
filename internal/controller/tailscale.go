@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type splitDNSPayload struct {
@@ -146,16 +151,73 @@ func (tc TailscaleDNSClient) patchSplitDNS(routes map[string][]string) (bool, []
 	return true, added, nil
 }
 
-func CreateTailscaleClient(tailnet string, accessToken string, logger *slog.Logger) TailscaleDNSClient {
-	c := TailscaleDNSClient{
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+// NewTailscaleClient checks TAILSCALE_NAMESERVERS, reads the tailscale secret,
+// creates a TailscaleDNSClient, and polls for the gateway-dns service LB IP.
+// Returns nil when tailscale integration is disabled.
+func NewTailscaleClient(reader client.Reader, namespace string, logger *slog.Logger) (*TailscaleDNSClient, error) {
+	if !strings.EqualFold(os.Getenv("TAILSCALE_NAMESERVERS"), "true") {
+		return nil, nil
+	}
+
+	log.Printf("tailscale split-dns sync enabled; reading secret from namespace %s", namespace)
+
+	secret := &corev1.Secret{}
+	key := client.ObjectKey{Name: "tailscale", Namespace: namespace}
+	if err := reader.Get(context.Background(), key, secret); err != nil {
+		return nil, fmt.Errorf("unable to read tailscale secret: %w", err)
+	}
+
+	tailnet := string(secret.Data["tailnet"])
+	accessToken := string(secret.Data["accessToken"])
+
+	if tailnet == "" || accessToken == "" {
+		return nil, fmt.Errorf("tailscale secret missing tailnet or accessToken keys")
+	}
+
+	c := &TailscaleDNSClient{
+		client: &http.Client{Timeout: 10 * time.Second},
 		apiURI: fmt.Sprintf("https://api.tailscale.com/api/v2/tailnet/%s/dns/split-dns", tailnet),
 		bearer: "Bearer " + accessToken,
 		logger: logger,
 	}
-	return c
+	log.Printf("tailscale client initialized for tailnet %s", tailnet)
+
+	var dnsResolverIPs []string
+	svcKey := client.ObjectKey{Name: "gateway-dns", Namespace: namespace}
+	pollCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+pollLoop:
+	for {
+		svc := &corev1.Service{}
+		if err := reader.Get(pollCtx, svcKey, svc); err == nil {
+			for _, ing := range svc.Status.LoadBalancer.Ingress {
+				if ing.IP != "" {
+					dnsResolverIPs = append(dnsResolverIPs, ing.IP)
+				}
+			}
+			if len(dnsResolverIPs) == 0 && len(svc.Spec.ExternalIPs) > 0 {
+				dnsResolverIPs = append(dnsResolverIPs, svc.Spec.ExternalIPs...)
+			}
+			if len(dnsResolverIPs) > 0 {
+				log.Printf("DNS resolver IPs for Tailscale: %v", dnsResolverIPs)
+				c.SetDNSResolverIPs(dnsResolverIPs)
+				break pollLoop
+			}
+			log.Println("waiting for gateway-dns service LB IP...")
+		} else {
+			log.Printf("warning: unable to read DNS service gateway-dns/%s: %v", namespace, err)
+		}
+
+		select {
+		case <-pollCtx.Done():
+			log.Println("warning: timed out waiting for gateway-dns service LB IP; Tailscale split-dns sync will be skipped")
+			break pollLoop
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	return c, nil
 }
 
 // collapseDomains groups hostnames by their IP sets and replaces sibling

@@ -1,20 +1,16 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/marttimourujarvi/gateway-dns/internal/controller"
 	"github.com/marttimourujarvi/gateway-dns/internal/dnsstore"
 	"github.com/marttimourujarvi/gateway-dns/internal/server"
-	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -29,7 +25,6 @@ func main() {
 	// Single in-memory store shared by the DNS server and the reconciler.
 	store := dnsstore.NewStore()
 
-	var tsClient *controller.TailscaleDNSClient
 	namespace := getNamespace()
 
 	// Start the DNS server in the background.
@@ -58,65 +53,13 @@ func main() {
 		Level: slog.LevelInfo,
 	})).With("component", "fqdn-reconciler")
 
-	if strings.EqualFold(os.Getenv("TAILSCALE_NAMESERVERS"), "true") {
-		log.Printf("tailscale split-dns sync enabled; reading secret from namespace %s", namespace)
-
-		secret := &corev1.Secret{}
-		key := client.ObjectKey{Name: "tailscale", Namespace: namespace}
-		if err := mgr.GetAPIReader().Get(context.Background(), key, secret); err != nil {
-			ctrl.Log.Error(err, "unable to read tailscale secret")
-			log.Fatal(err)
-		}
-
-		tailnet := string(secret.Data["tailnet"])
-		accessToken := string(secret.Data["accessToken"])
-
-		if tailnet == "" || accessToken == "" {
-			log.Fatal("tailscale secret missing tailnet or accessToken keys")
-		}
-
-		c := controller.CreateTailscaleClient(tailnet, accessToken, logger)
-		tsClient = &c
-		log.Printf("tailscale client initialized for tailnet %s", tailnet)
-	} else {
-		log.Println("tailscale split-dns sync disabled (set TAILSCALE_NAMESERVERS=true to enable)")
+	tsClient, err := controller.NewTailscaleClient(mgr.GetAPIReader(), namespace, logger)
+	if err != nil {
+		ctrl.Log.Error(err, "unable to initialize tailscale client")
+		log.Fatal(err)
 	}
-
-	var dnsResolverIPs []string
-	svcKey := client.ObjectKey{Name: "gateway-dns", Namespace: namespace}
-	pollCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
-pollLoop:
-	for {
-		svc := &corev1.Service{}
-		if err := mgr.GetAPIReader().Get(pollCtx, svcKey, svc); err == nil {
-			for _, ing := range svc.Status.LoadBalancer.Ingress {
-				if ing.IP != "" {
-					dnsResolverIPs = append(dnsResolverIPs, ing.IP)
-				}
-			}
-			if len(dnsResolverIPs) == 0 && len(svc.Spec.ExternalIPs) > 0 {
-				dnsResolverIPs = append(dnsResolverIPs, svc.Spec.ExternalIPs...)
-			}
-			if len(dnsResolverIPs) > 0 {
-				log.Printf("DNS resolver IPs for Tailscale: %v", dnsResolverIPs)
-				if tsClient != nil {
-					tsClient.SetDNSResolverIPs(dnsResolverIPs)
-				}
-				break pollLoop
-			}
-			log.Println("waiting for gateway-dns service LB IP...")
-		} else {
-			log.Printf("warning: unable to read DNS service gateway-dns/%s: %v", namespace, err)
-		}
-
-		select {
-		case <-pollCtx.Done():
-			log.Println("warning: timed out waiting for gateway-dns service LB IP; Tailscale split-dns sync will be skipped")
-			break pollLoop
-		case <-time.After(5 * time.Second):
-		}
+	if tsClient == nil {
+		log.Println("tailscale split-dns sync disabled (set TAILSCALE_NAMESERVERS=true to enable)")
 	}
 
 	if err := (&controller.FQDNReconciler{

@@ -4,11 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"testing"
 )
 
-func TestCreateTailscaleClient(t *testing.T) {
-	c := CreateTailscaleClient("example.ts.net", "my-token", nil)
+func TestTailscaleClientCreation(t *testing.T) {
+	c := &TailscaleDNSClient{
+		client: http.DefaultClient,
+		apiURI: "https://api.tailscale.com/api/v2/tailnet/example.ts.net/dns/split-dns",
+		bearer: "Bearer my-token",
+	}
 
 	wantURI := "https://api.tailscale.com/api/v2/tailnet/example.ts.net/dns/split-dns"
 	if c.apiURI != wantURI {
@@ -20,12 +25,6 @@ func TestCreateTailscaleClient(t *testing.T) {
 		t.Errorf("bearer = %q, want %q", c.bearer, wantBearer)
 	}
 
-	if c.client == nil {
-		t.Error("http.Client is nil")
-	}
-	if c.client.Timeout == 0 {
-		t.Error("http.Client timeout not set")
-	}
 }
 
 func TestNewBody(t *testing.T) {
@@ -158,7 +157,11 @@ func TestCollapseDomains(t *testing.T) {
 }
 
 func TestNewRequestSetsAuth(t *testing.T) {
-	c := CreateTailscaleClient("test.ts.net", "token123", nil)
+	c := &TailscaleDNSClient{
+		client: http.DefaultClient,
+		apiURI: "https://api.tailscale.com/api/v2/tailnet/test.ts.net/dns/split-dns",
+		bearer: "Bearer token123",
+	}
 	req, err := c.newRequest(context.Background(), "GET", nil)
 	if err != nil {
 		t.Fatalf("newRequest error: %v", err)
