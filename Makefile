@@ -11,3 +11,6 @@ fmt: vet
 vet:
 	go vet ./...
 
+setup:
+	git config core.hooksPath .githooks
+

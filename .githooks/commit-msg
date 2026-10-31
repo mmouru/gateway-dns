@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(head -n1 "$COMMIT_MSG_FILE")
+
+# Conventional Commit regex
+# Matches: type(scope)!: subject  or  type!: subject  or  type(scope): subject  or  type: subject
+# Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_-]+\))?(!)?: .+'
+
+if ! echo "$COMMIT_MSG" | grep -Eq "$PATTERN"; then
+    echo "Aborting commit." >&2
+    echo "The commit message does not follow Conventional Commits." >&2
+    echo "Expected format: <type>[optional scope][optional !]: <description>" >&2
+    echo "Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert" >&2
+    echo "" >&2
+    echo "Example: feat(parser): add support for new record types" >&2
+    exit 1
+fi

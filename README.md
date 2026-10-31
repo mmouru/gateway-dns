@@ -47,6 +47,26 @@ kubectl apply -f https://raw.githubusercontent.com/marttimourujarvi/gateway-dns/
 
 A Dockerfile and deploy manifests are included. See `deploy/` and `Makefile` for kind-based workflow.
 
+## Development
+
+After cloning, run:
+
+```bash
+make setup
+```
+
+This points Git to the shared hooks in `.githooks/`:
+
+- **`pre-commit`** — runs `make test` before every commit
+  *(if full tests are too slow, replace with lighter checks)*
+- **`commit-msg`** — enforces [Conventional Commits](https://www.conventionalcommits.org/)
+
+The Conventional Commit check is required so that `release-please` can generate
+changelogs automatically.
+
+You can skip hooks in an emergency with `git commit --no-verify`, but CI will
+still run the same checks.
+
 ## Project layout
 
 | Path                          | Purpose                                   |
