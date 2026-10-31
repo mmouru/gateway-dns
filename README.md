@@ -47,6 +47,26 @@ kubectl apply -f https://raw.githubusercontent.com/marttimourujarvi/gateway-dns/
 
 A Dockerfile and deploy manifests are included. See `deploy/` and `Makefile` for kind-based workflow.
 
+## Development
+
+After cloning, run:
+
+```bash
+make setup
+```
+
+This points Git to the shared hooks in `.githooks/`:
+
+- **`pre-commit`** — runs `make test` before every commit
+  *(if full tests are too slow, replace with lighter checks)*
+- **`commit-msg`** — enforces [Conventional Commits](https://www.conventionalcommits.org/)
+
+The Conventional Commit check is required so that `release-please` can generate
+changelogs automatically.
+
+You can skip hooks in an emergency with `git commit --no-verify`, but CI will
+still run the same checks.
+
 ## Project layout
 
 | Path                          | Purpose                                   |
@@ -54,12 +74,18 @@ A Dockerfile and deploy manifests are included. See `deploy/` and `Makefile` for
 | `cmd/gateway-dns/main.go`     | Entrypoint (DNS server + controller mgr)  |
 | `internal/server/server.go`   | UDP DNS server using `miekg/dns`          |
 | `internal/dnsstore/store.go`  | Thread-safe in-memory A-record store      |
-| `internal/controller/`        | Gateway API reconciler                    |
+| `internal/controller/`        | Gateway API reconciler + Tailscale        |
 | `deploy/`                     | Kubernetes manifests                      |
+
+<details>
+<summary>Tailscale integration</summary>
 
 ## Tailscale integration
 
-When `TAILSCALE_NAMESERVERS` is set to `true`, gateway-dns automatically creates **split-dns routes** in Tailscale. Each hostname declared on a Gateway API route gets its own split-dns entry pointing to the IPv4 addresses of its parent Gateway(s).
+When `TAILSCALE_NAMESERVERS` is set to `true`, gateway-dns automatically creates **split-dns routes** in Tailscale based on hostname defined in each Gateway.
+Active Kubernetes Service for gateway-dns is used as nameserver.
+
+All deployed Gateways MUST specify `spec.listeners.Hostname` field, these are used as domains for the nameservers in Tailscale.
 
 ### Prerequisites
 
@@ -95,6 +121,8 @@ The pod namespace is auto-detected from `/var/run/secrets/kubernetes.io/servicea
 - Existing split-dns routes on other domains are left untouched.
 - The controller fetches current split-dns config before every update, merges in the new Gateway IPs, and sends a `PATCH` to [`/tailnet/{tailnet}/dns/split-dns`](https://tailscale.com/api-docs#tag/dns/PATCH/tailnet/{tailnet}/dns/split-dns).
 - Tailscale API calls are performed by `TailscaleDNSClient` (`internal/controller/tailscale.go`).
+
+</details>
 
 ## Release process
 

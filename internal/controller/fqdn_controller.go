@@ -25,12 +25,14 @@ type FQDNReconciler struct {
 }
 
 const finalizer = "gateway.dns/finalizer"
+const gatewayFinalizer = "gateway.dns/splitdns-cleanup"
 
 // Reconcile handles both HTTPRoute and GRPCRoute objects.
+// Also it handles Gateway objects when TailscaleClient is defined.
 // It is triggered for the primary resource (HTTPRoute) and via Watches
 // for GRPCRoute and Gateway changes.
 func (r *FQDNReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Try HTTPRoute first.
+	// HTTPRoute
 	var httpRoute gatewayv1.HTTPRoute
 	if err := r.Get(ctx, req.NamespacedName, &httpRoute); err != nil {
 		if client.IgnoreNotFound(err) != nil {
@@ -41,16 +43,28 @@ func (r *FQDNReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return r.reconcileRoute(ctx, &httpRoute, httpRoute.Spec.Hostnames, httpRoute.Spec.ParentRefs)
 	}
 
-	// Fall back to GRPCRoute.
+	// GRPCRoute
 	var grpcRoute gatewayv1.GRPCRoute
 	if err := r.Get(ctx, req.NamespacedName, &grpcRoute); err != nil {
 		if client.IgnoreNotFound(err) != nil {
 			r.Logger.Error("failed to get GRPCRoute", "error", err)
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+	} else {
+		return r.reconcileRoute(ctx, &grpcRoute, grpcRoute.Spec.Hostnames, grpcRoute.Spec.ParentRefs)
 	}
-	return r.reconcileRoute(ctx, &grpcRoute, grpcRoute.Spec.Hostnames, grpcRoute.Spec.ParentRefs)
+
+	// Gateway
+	var gateway gatewayv1.Gateway
+	if err := r.Get(ctx, req.NamespacedName, &gateway); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			r.Logger.Error("failed to get Gateway", "error", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	} else {
+		return r.reconcileGateway(ctx, &gateway)
+	}
 }
 
 // reconcileRoute contains the shared logic for maintaining DNS A-records
@@ -133,19 +147,66 @@ func (r *FQDNReconciler) reconcileRoute(ctx context.Context, obj client.Object, 
 		}
 	}
 
-	if r.TailscaleClient != nil && len(gatewayIPs) > 0 {
-		routes := make(map[string][]string, len(hostnames))
-		for _, hostname := range hostnames {
-			routes[string(hostname)] = gatewayIPs
+	return ctrl.Result{}, nil
+}
+
+// If TailscaleClient is defined for DNSStore, create
+// upstream splitdns records for each defined Gateway
+// with the LoadBalancer IP of the Service resource.
+// Also add Finalizers to Gateways for upstream DNS cleanup.
+func (r *FQDNReconciler) reconcileGateway(ctx context.Context, g *gatewayv1.Gateway) (ctrl.Result, error) {
+	if r.TailscaleClient == nil {
+		return ctrl.Result{}, nil
+	}
+
+	// if deletion, remove upstream dns, finalizer
+	if !g.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(g, gatewayFinalizer) {
+			for _, l := range g.Spec.Listeners {
+				if l.Hostname == nil {
+					continue
+				}
+				if err := r.TailscaleClient.DelSplitDNS(string(*l.Hostname)); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			controllerutil.RemoveFinalizer(g, gatewayFinalizer)
+			if err := r.Update(ctx, g); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
-		_, added, err := r.TailscaleClient.patchSplitDNS(routes)
-		if err != nil {
-			r.Logger.Error("failed to patch tailscale split-dns", "error", err)
-		} else if len(added) > 0 {
-			r.Logger.Info("added tailscale split-dns routes", "added", added, "route", obj.GetName(), "namespace", obj.GetNamespace())
+		return ctrl.Result{}, nil
+	}
+
+	// Ensure finalizer is present on creation/update.
+	if !controllerutil.ContainsFinalizer(g, gatewayFinalizer) {
+		controllerutil.AddFinalizer(g, gatewayFinalizer)
+		if err := r.Update(ctx, g); err != nil {
+			return ctrl.Result{}, err
 		}
-	} else if r.TailscaleClient == nil {
-		r.Logger.Debug("tailscale client not configured, skipping split-dns sync")
+		return ctrl.Result{}, nil
+	}
+
+	resolverIPs := r.TailscaleClient.DNSResolverIPs()
+	if len(resolverIPs) == 0 {
+		r.Logger.Warn("tailscale client configured but no DNS resolver IPs available, skipping split-dns sync for gateway", "gateway", g.Name, "namespace", g.Namespace)
+		return ctrl.Result{}, nil
+	}
+
+	routes := make(map[string]string)
+	for _, l := range g.Spec.Listeners {
+		if l.Hostname == nil {
+			continue
+		}
+		routes[string(*l.Hostname)] = resolverIPs[0]
+	}
+
+	if len(routes) > 0 {
+		if err := r.TailscaleClient.AddSplitDNS(routes); err != nil {
+			r.Logger.Error("failed to add tailscale split-dns for gateway", "gateway", g.Name, "namespace", g.Namespace, "error", err)
+			return ctrl.Result{}, err
+		}
+		r.Logger.Info("added tailscale split-dns routes for gateway", "gateway", g.Name, "namespace", g.Namespace, "routes", routes)
 	}
 
 	return ctrl.Result{}, nil
@@ -160,6 +221,11 @@ func (r *FQDNReconciler) gatewayToRoutes(ctx context.Context, obj client.Object)
 	}
 
 	var requests []reconcile.Request
+
+	// Also enqueue the Gateway itself so reconcileGateway runs.
+	requests = append(requests, reconcile.Request{
+		NamespacedName: client.ObjectKeyFromObject(gw),
+	})
 
 	// HTTPRoutes referencing this Gateway.
 	var httpRoutes gatewayv1.HTTPRouteList

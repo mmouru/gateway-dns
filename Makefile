@@ -2,11 +2,15 @@ NAME ?= gateway-dns
 
 deploy: build
 	kind load docker-image ${NAME}:latest --name dev
-build: fmt
+build: test
 	docker build . -t ${NAME}
+test: fmt
+	go test ./...
 fmt: vet
-	go fmt ./...
+	gofmt -d .
 vet:
 	go vet ./...
 
+setup:
+	git config core.hooksPath .githooks
 
