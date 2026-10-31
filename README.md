@@ -85,6 +85,8 @@ still run the same checks.
 When `TAILSCALE_NAMESERVERS` is set to `true`, gateway-dns automatically creates **split-dns routes** in Tailscale based on hostname defined in each Gateway.
 Active Kubernetes Service for gateway-dns is used as nameserver.
 
+All deployed Gateways MUST specify `spec.listeners.Hostname` field, these are used as domains for the nameservers in Tailscale.
+
 ### Prerequisites
 
 Create a Secret named `tailscale` in the **same namespace** as gateway-dns:
