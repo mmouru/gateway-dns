@@ -16,10 +16,7 @@ metadata:
 rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["httproutes", "grpcroutes", "gateways"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["httproutes", "grpcroutes"]
-    verbs: ["update"]  # for finalizers
+    verbs: ["get", "list", "watch", "update"]
   - apiGroups: [""]
     resources: ["secrets", "services"]
     verbs: ["get", "list"]
